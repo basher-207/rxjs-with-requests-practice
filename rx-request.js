@@ -1,4 +1,5 @@
 const { ajax } = require("rxjs/ajax");
+const { map, mergeMap, from, max} = require("rxjs");
 const XMLHttpRequest = require("xhr2");
 global.XMLHttpRequest = XMLHttpRequest;
 
@@ -8,36 +9,44 @@ function getMovie$(directorName = "Quentin Tarantino") {
   const directors$ = ajax({
     url: `${BASE_PATH}/directors/`,
   })
-    .pipe
-    // get response property from the result
-
-    // find the id of director with name equal to directorName
-
-    // make a new request to `${BASE_PATH}/directors/${id}/movies`
-    // to retrieve the list of movies of chosen director
-    // NOTE that the source observable has to be mapped to a new observable here,
-    // so use a higher order mapping operator
-    // get response property from the result
-
-    // for each movie in the result you need to gather its average review score
-    // to do so, you'll need to make a request to `${BASE_PATH}/movies/${movie.id}/reviews`
-    // use getAverageScore function for this and combine all evaluated by this function results
-    // NOTE that current observable has to be mapped to a new observable here,
-    // so use a higher order mapping operator
-
-    // get the movie title with the highest review score
-    ();
+  .pipe(
+    map(x => {
+      const allDirectors = x.response;
+      return allDirectors.find(d => d.name === directorName);
+    }),
+    mergeMap(x => {
+      const id = x.id;
+      return ajax({url: `${BASE_PATH}/directors/${id}/movies`});
+    }),
+    mergeMap(x => {
+      const moviesArr = x.response;
+      return from(moviesArr).pipe(
+        mergeMap(movie => getAverageScore(movie))
+      );
+    }),
+    max((a, b) => a.averageScore < b.averageScore ? -1 : 1),
+    map(x => x.title)
+  );
 
   function getAverageScore(movie) {
     return ajax({
       url: `${BASE_PATH}/movies/${movie.id}/reviews`,
     }).pipe(
-      // get response property from the result
-      // convert result to evaluated average score
-      // convert result to an object with structure like this: 
-      // { title: movie.title, averageScore: evaluatedOnPreviousStep }      
+      map(x => {
+        const commentsArray = x.response;
+        return commentsArray.reduce((acc, cur) => {
+          const scoreSum = acc.scoreSum + cur.rating;
+          const commentsCount = ++acc.commentsCount;
+          return {...acc, scoreSum: scoreSum, commentsCount: commentsCount};
+        },{title: movie.title, scoreSum: 0, commentsCount: 0});
+      }),
+      map(x => {
+        const averageScore = x.scoreSum / x.commentsCount;
+        return {title: x.title, averageScore: averageScore};
+      })    
     );
-  }
+  };
+
   return directors$;
 }
 
